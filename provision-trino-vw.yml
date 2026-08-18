@@ -1,0 +1,76 @@
+---
+# Provision a Trino Virtual Warehouse on a CDW-capable CDP environment.
+#
+# Trino VW support landed in cloudera.cloud @ 5ad1809 (#307). This chains the full stack:
+#   1. Activate a CDW cluster on the environment      (dw_cluster)
+#   2. Create a Database Catalog inside it            (dw_database_catalog)
+#   3. Create the Trino Virtual Warehouse             (dw_virtual_warehouse, type: trino)
+#
+# The environment must have private worker subnets (CDW/EKS cannot activate on a
+# public-subnet-only env). Auth: uses the default profile in ~/.cdp/credentials (no secrets here).
+# Idempotent: safe to re-run; each module reconciles to state: present.
+- name: Provision Trino Virtual Warehouse
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # srm-iceberg-cdp-env rebuilt 2026-08-18 as semi-private (private worker subnets)
+    env_crn: "crn:cdp:environments:us-west-1:558bc1d2-8867-4357-8524-311d51259233:environment:2ccc0fd0-c645-4156-9b95-2016d632fb30"
+    dbc_name: "srm-iceberg-dbc"
+    vw_name: "srm-trino-vw"
+    vw_size: "xsmall"
+    # semi-private env: activate CDW with a PRIVATE load balancer on the PRIVATE subnets.
+    # A public LB (private_load_balancer: false) on a semi-private env is rejected at CDW
+    # intake (Accepted -> Error at ~6 min, no reason surfaced). Private LB + private subnets
+    # for both lb and worker is what activates. AWS subnets are required (omitting them fails
+    # with "missing AWS activation parameters"), so lb + worker both use the private subnets.
+    aws_worker_subnets: &priv_subnets
+      - "subnet-0261391108f5e05dc"   # private us-east-2a
+      - "subnet-0da637498c8807337"   # private us-east-2b
+      - "subnet-0fef268632cabe1ee"   # private us-east-2c
+    aws_lb_subnets: *priv_subnets
+  tasks:
+    - name: Activate CDW cluster on srm-iceberg
+      cloudera.cloud.dw_cluster:
+        env_crn: "{{ env_crn }}"
+        overlay: true                 # private Pod IP range — conserve VPC IPs in shared tenant
+        private_load_balancer: true   # semi-private env → private LB (public LB is rejected at intake)
+        public_worker_node: false     # workers on private subnets
+        aws_lb_subnets: "{{ aws_lb_subnets }}"
+        aws_worker_subnets: "{{ aws_worker_subnets }}"
+        state: present
+        wait: true
+        timeout: 3600
+      register: dw
+
+    - name: CDW cluster id
+      ansible.builtin.debug:
+        msg: "CDW cluster {{ dw.cluster.id }} ({{ dw.cluster.status | default('?') }})"
+
+    - name: Create Database Catalog
+      cloudera.cloud.dw_database_catalog:
+        cluster_id: "{{ dw.cluster.id }}"
+        name: "{{ dbc_name }}"
+        state: present
+        wait: true
+        timeout: 3600
+      register: dbc
+
+    - name: Database Catalog id
+      ansible.builtin.debug:
+        msg: "Database Catalog {{ dbc.database_catalog.id }} ({{ dbc.database_catalog.status | default('?') }})"
+
+    - name: Create Trino Virtual Warehouse
+      cloudera.cloud.dw_virtual_warehouse:
+        cluster_id: "{{ dw.cluster.id }}"
+        catalog_id: "{{ dbc.database_catalog.id }}"
+        name: "{{ vw_name }}"
+        type: trino
+        tshirt_size: "{{ vw_size }}"
+        state: present
+        wait: true
+        timeout: 3600
+      register: vw
+
+    - name: Trino Virtual Warehouse result
+      ansible.builtin.debug:
+        var: vw.virtual_warehouse
