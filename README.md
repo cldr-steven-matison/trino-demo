@@ -41,19 +41,21 @@ pip install git+https://github.com/cloudera-labs/cdpy.git
 
 ## Configure and run
 
-Set `env_crn`, the Database Catalog / VW names, and the subnet IDs at the top of
-`provision-trino-vw.yml`. Pull the private subnet IDs from the environment:
+`env_crn` and the private subnet IDs change on every environment rebuild, so the playbook takes
+them as extra-vars instead of hardcoding them. Pull both from the live environment:
 
 ```bash
-cdp environments describe-environment \
-  --environment-name <your-env> | jq '.environment.network'
+ENV_CRN=$(cdp environments describe-environment --environment-name <your-env> | jq -r '.environment.crn')
+SUBNETS=$(aws ec2 describe-subnets --filters "Name=tag:Name,Values=<env-prefix>-net-private-*" \
+           --query 'Subnets[].SubnetId' --output json | jq -c .)
 ```
 
 Then run it:
 
 ```bash
 source ~/.venvs/clouderacloud/bin/activate
-ansible-playbook provision-trino-vw.yml -v
+ansible-playbook provision-trino-vw.yml -v \
+  -e "$(jq -n --arg crn "$ENV_CRN" --argjson subs "$SUBNETS" '{env_crn:$crn, private_subnets:$subs}')"
 ```
 
 The playbook waits for each step (up to 3600s): CDW cluster `AVAILABLE` → Database Catalog
