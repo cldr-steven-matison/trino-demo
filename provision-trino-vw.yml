@@ -1,7 +1,8 @@
 ---
 # Provision a Trino Virtual Warehouse on a CDW-capable CDP environment.
 #
-# Trino VW support landed in cloudera.cloud @ 5ad1809 (#307). This chains the full stack:
+# Trino VW support landed in cloudera.cloud @ 5ad1809 (#307); pinned at main e7f1cea, where
+# dw_cluster takes `env` + `aws: {lb_subnets, worker_subnets}`. This chains the full stack:
 #   1. Activate a CDW cluster on the environment      (dw_cluster)
 #   2. Create a Database Catalog inside it            (dw_database_catalog)
 #   3. Create the Trino Virtual Warehouse             (dw_virtual_warehouse, type: trino)
@@ -38,12 +39,13 @@
     # the private subnets.
     - name: Activate CDW cluster on the environment
       cloudera.cloud.dw_cluster:
-        env_crn: "{{ env_crn }}"
+        env: "{{ env_crn }}"
         overlay: true                 # private Pod IP range — conserve VPC IPs in shared tenant
         private_load_balancer: true   # semi-private env → private LB (public LB is rejected at intake)
         public_worker_node: false     # workers on private subnets
-        aws_lb_subnets: "{{ private_subnets }}"
-        aws_worker_subnets: "{{ private_subnets }}"
+        aws:
+          lb_subnets: "{{ private_subnets }}"
+          worker_subnets: "{{ private_subnets }}"
         state: present
         wait: true
         timeout: 3600

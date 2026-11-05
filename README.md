@@ -3,7 +3,9 @@
 Provision a **Trino** Virtual Warehouse on Cloudera Data Warehouse (CDW) with one idempotent
 Ansible playbook. Trino VW support landed in `cloudera.cloud`'s `dw_virtual_warehouse` at commit
 [`5ad1809`](https://github.com/cloudera-labs/cloudera.cloud/commit/5ad1809) (#307) — `type: trino`
-plus a Trino-only `connectors` full-sync list.
+plus a Trino-only `connectors` full-sync list. The playbook is pinned at main
+[`e7f1cea`](https://github.com/cloudera-labs/cloudera.cloud/commit/e7f1cea), where `dw_cluster`
+uses direct API calls and takes `env` + `aws: {lb_subnets, worker_subnets}`.
 
 `provision-trino-vw.yml` chains the whole stack against an existing CDP environment:
 
@@ -29,13 +31,15 @@ python3 -m venv ~/.venvs/clouderacloud
 source ~/.venvs/clouderacloud/bin/activate
 pip install ansible
 
-# Pin the collection to the commit that introduced Trino VW support
+# Pin the collection (main e7f1cea; Trino VW support landed at 5ad1809) into the venv's own
+# collections dir, where monday-redeploy.sh points ANSIBLE_COLLECTIONS_PATH
 ansible-galaxy collection install \
-  git+https://github.com/cloudera-labs/cloudera.cloud.git,5ad1809 --force
+  git+https://github.com/cloudera-labs/cloudera.cloud.git,e7f1cea --force \
+  -p ~/.venvs/clouderacloud/collections
 
-# dw_cluster / dw_database_catalog still use the legacy cdpy SDK (only dw_virtual_warehouse
-# moved to the new cdp_client in #307). Install the cloudera-labs cdpy from git — NOT the
-# unrelated PyPI package that is also named "cdpy".
+# dw_database_catalog still uses the legacy cdpy SDK (dw_virtual_warehouse and dw_cluster moved
+# to cdp_client). Install the cloudera-labs cdpy from git — NOT the unrelated PyPI package that
+# is also named "cdpy".
 pip install git+https://github.com/cloudera-labs/cdpy.git
 ```
 
@@ -70,8 +74,8 @@ the **private** subnets:
 | `dw_cluster` var | value | why |
 |---|---|---|
 | `private_load_balancer` | `true` | A public LB on a private-subnet env is rejected at intake. |
-| `aws_lb_subnets` | the private subnets | Must be explicit — required parameter. |
-| `aws_worker_subnets` | the same private subnets | Workers run on private subnets. |
+| `aws.lb_subnets` | the private subnets | Must be explicit — required parameter. |
+| `aws.worker_subnets` | the same private subnets | Workers run on private subnets. |
 | `public_worker_node` | `false` | Workers on private subnets. |
 | `overlay` | `true` | Private Pod IP range — conserves VPC IPs in a shared tenant. |
 
@@ -85,7 +89,7 @@ path**, not from the public internet. Public access needs a VPN or a bastion int
   `statusReason: null` — no diagnostic via CLI, UI, or audit log. The LB type is the trap.
 - **Don't omit the subnets.** `awsOptions: null` does not work via CLI/Ansible even though a
   UI-created cluster shows it. Omitting subnets fails immediately with
-  `missing AWS activation parameters`. Always pass `aws_lb_subnets` and `aws_worker_subnets`.
+  `missing AWS activation parameters`. Always pass `aws.lb_subnets` and `aws.worker_subnets`.
 - **Don't run `cdp environments initialize-aws-compute-cluster`.** It is not part of the CDW path.
   It creates a "default" externalized compute cluster that cannot be deleted on its own
   (`default Compute Cluster cannot be deleted by end user`), wedging the environment in
